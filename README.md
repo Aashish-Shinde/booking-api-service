@@ -91,20 +91,72 @@ ENVIRONMENT=development
 LOG_LEVEL=info
 ```
 
-### Step 5: Run Database Migrations
+### Step 5: Create Database Manually
+
+Before running the application, create the database:
 
 ```bash
-make migrate-up
+mysql -h localhost -u root -p -e "CREATE DATABASE IF NOT EXISTS booking_api CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
-Or manually:
+### Step 6: Run Database Schema Migrations Manually
+
+The database schema must be applied **manually** using the SQL migration files. The migrations are located in `db/migrations/`:
+
+**Run the migration files in order:**
+
 ```bash
-migrate -path db/migrations -database "mysql://root:root@tcp(localhost:3306)/booking_api" up
+# 1. Create initial database structure
+mysql -h localhost -u root -p booking_api < db/migrations/000_v1.0.0_create_database.up.sql
+
+# 2. Create tables and constraints
+mysql -h localhost -u root -p booking_api < db/migrations/001_v1.0.0_init_schema.up.sql
+
+# 3. Seed test data (coaches, users, availability)
+mysql -h localhost -u root -p booking_api < db/migrations/002_v1.0.0_seed_data.up.sql
 ```
 
-This creates all tables and seeds initial test data.
+**Verify the migrations were applied:**
 
-### Step 6: Run the Application
+```bash
+mysql -h localhost -u root -p booking_api -e "SHOW TABLES;"
+```
+
+You should see these tables:
+- `users` - 10 test users in different timezones
+- `coaches` - 8 test coaches with availability
+- `availability` - Weekly recurring availability windows
+- `availability_exceptions` - One-time overrides (days off, special hours)
+- `bookings` - Booking records
+
+**If You Need to Rollback (Undo) Migrations:**
+
+```bash
+# Undo in reverse order
+mysql -h localhost -u root -p booking_api < db/migrations/002_v1.0.0_seed_data.down.sql
+mysql -h localhost -u root -p booking_api < db/migrations/001_v1.0.0_init_schema.down.sql
+mysql -h localhost -u root -p booking_api < db/migrations/000_v1.0.0_create_database.down.sql
+```
+
+**What Each Migration File Does:**
+
+The migration files are plain SQL scripts that set up your database:
+
+- **000_v1.0.0_create_database.up.sql** - Creates the initial database structure
+- **001_v1.0.0_init_schema.up.sql** - Creates all tables with:
+  - Foreign key constraints
+  - UNIQUE constraints (prevents double-booking)
+  - Indexes for query performance
+  - Soft delete support (deleted flag)
+- **002_v1.0.0_seed_data.up.sql** - Inserts test data:
+  - 10 test users in different timezones (Tokyo, London, New York, Paris, etc.)
+  - 8 test coaches with different availability patterns
+  - Sample availability windows and exceptions
+  - Sample bookings in different statuses
+
+After all migrations are applied, you'll have a fully configured database ready for testing!
+
+### Step 7: Run the Application
 
 ```bash
 make run
@@ -442,6 +494,108 @@ DELETE /api/bookings/{bookingID}
 - `404 Not Found`: Booking not found
 - `400 Bad Request`: Cannot cancel past bookings
 
+## 🔑 Quick Start: Core Concepts
+
+### What Are Slots?
+
+**30-minute time windows** when a coach is available to book. They're generated automatically from availability windows.
+
+**Example:**
+```
+Coach Available: 9:00 AM - 12:00 PM
+↓
+Generated Slots:
+  9:00 - 9:30 AM   ✓ Available
+  9:30 - 10:00 AM  ✓ Available
+  10:00 - 10:30 AM ✓ Available
+  10:30 - 11:00 AM ✓ Available
+  11:00 - 11:30 AM ✓ Available
+  11:30 - 12:00 PM ✓ Available
+```
+
+### What Is Availability?
+
+Availability is when a coach can accept bookings. It comes in two forms:
+
+**1. Weekly Recurring Availability**
+```json
+{
+  "day_of_week": 1,        // Monday
+  "start_time": "09:00",   // Coach's local timezone
+  "end_time": "17:00"      // Coach's local timezone
+}
+```
+
+**2. One-Time Exceptions**
+```json
+{
+  "date": "2026-04-10",
+  "is_available": false     // Day off
+}
+
+OR
+
+{
+  "date": "2026-04-12",
+  "is_available": true,
+  "start_time": "10:00",
+  "end_time": "14:00"       // Special hours on this day
+}
+```
+
+### Booking a Slot: The Complete Flow
+
+**1. User requests available slots:**
+```bash
+GET /api/availability/coaches/1/slots?date=2026-04-06&userID=1
+```
+
+**2. System performs UTC overlap matching:**
+```
+User's Date (April 6 in Tokyo):     April 5, 3 PM UTC → April 6, 3 PM UTC
+Coach's Availability (Monday 9-5 NY): April 7, 1 PM UTC → April 7, 9 PM UTC
+
+Result: Check what PART of the user's date range overlaps with coach's availability
+```
+
+**3. Generate 30-minute slots from overlap:**
+```json
+{
+  "slots": [
+    { "start_time": "2026-04-06T14:00:00Z", "end_time": "2026-04-06T14:30:00Z" },
+    { "start_time": "2026-04-06T14:30:00Z", "end_time": "2026-04-06T15:00:00Z" }
+  ]
+}
+```
+
+**4. User books one of these slots:**
+```bash
+POST /api/bookings
+{
+  "user_id": 1,
+  "coach_id": 1,
+  "start_time": "2026-04-06T14:00:00Z"
+}
+```
+
+**5. System validates:**
+- ✓ Time is in RFC3339 UTC format
+- ✓ Time aligns to 30-minute boundary
+- ✓ Coach hasn't already been booked for this slot
+- ✓ Time is in the future
+
+**6. Booking created:**
+```json
+{
+  "id": 1,
+  "user_id": 1,
+  "coach_id": 1,
+  "start_time": "2026-04-06T14:00:00Z",
+  "end_time": "2026-04-06T14:30:00Z",
+  "status": "ACTIVE"
+}
+```
+
 ## 🔑 Core Concepts
 
 ### Slots
@@ -501,47 +655,222 @@ If you submit the same request twice with the same key, you get the same respons
 
 ### Overview
 
-The system supports full timezone awareness:
+The system supports full timezone awareness with a **UTC overlap strategy**:
 
 - **Storage**: All times stored in UTC in the database
 - **Coach Timezone**: Coach's availability is set in their local timezone
 - **User Timezone**: Slots are converted to user's timezone in API response
 - **Automatic Conversion**: Handled transparently at API boundaries
 
-### How It Works
+### Deep Dive: Time Conversion Algorithm
 
-1. **Setting Availability**
+The system uses a **UTC overlap matching** approach to handle timezone-aware bookings across different timezones:
+
+#### Step 1: User's Date → UTC Range
+
+When a user requests slots for a date in their timezone:
+
+```
+User: April 13, 2026 in Asia/Tokyo (UTC+9)
+↓
+Start: April 12, 2026 3:00 PM UTC (April 13, 12:00 AM Tokyo)
+End:   April 13, 2026 3:00 PM UTC (April 14, 12:00 AM Tokyo)
+```
+
+The system converts the user's requested date **boundaries** to UTC. This means checking availability from midnight to midnight in the user's timezone, which translates to a different UTC range.
+
+#### Step 2: Coach's Availability → UTC Times
+
+Coach's weekly availability (e.g., "Monday 9 AM - 5 PM in America/New_York") is stored as local times. For each day within the UTC range:
+
+```
+Coach Availability: Monday 9:00 AM - 5:00 PM (America/New_York, UTC-4 EDT)
+↓
+For April 14 (Monday) in UTC:
+  → Monday in New York
+  → 9:00 AM EDT = 1:00 PM UTC
+  → 5:00 PM EDT = 9:00 PM UTC
+  → Available UTC slots: April 14, 1:00 PM - 9:00 PM UTC
+```
+
+The system converts the coach's local availability times to UTC.
+
+#### Step 3: Find Overlapping Times
+
+Compare the user's UTC date range with the coach's UTC availability:
+
+```
+User's UTC Range:        April 12, 3 PM — April 13, 3 PM UTC
+Coach's UTC Availability: April 14, 1 PM — April 14, 9 PM UTC
+
+Overlap: None! Coach not available during user's date in UTC.
+
+---
+
+User's UTC Range:        April 13, 3 PM — April 14, 3 PM UTC  
+Coach's UTC Availability: April 14, 1 PM — April 14, 9 PM UTC
+
+Overlap: April 14, 1 PM — April 14, 3 PM UTC → 2 hours available
+```
+
+Only the **overlapping times** are returned as available slots.
+
+#### Step 4: Generate 30-Minute Slots
+
+From the overlapping UTC times, create 30-minute slots:
+
+```
+UTC Overlap: April 14, 1:00 PM - 3:00 PM UTC
+↓
+Slots:
+  1. April 14, 1:00 PM - 1:30 PM UTC
+  2. April 14, 1:30 PM - 2:00 PM UTC
+  3. April 14, 2:00 PM - 2:30 PM UTC
+  4. April 14, 2:30 PM - 3:00 PM UTC
+```
+
+### Example: Real-World Timezone Scenario
+
+**Setup:**
+- **Coach**: Alice in America/New_York (UTC-4 EDT on April 14)
+  - Available: Monday-Friday, 9:00 AM - 5:00 PM EDT
+- **User**: Bob in Asia/Tokyo (UTC+9 JST)
+  - Requests: Available slots for April 13, 2026
+
+**Calculation:**
+
+1. **User's Date to UTC:**
    ```
-   Coach in America/New_York sets: 9:00 AM - 5:00 PM
-   → Stored as UTC equivalent in database
+   Bob's April 13 in Tokyo (9 AM Sunday → 9 AM Monday in UTC)
+   = April 12, midnight JST → April 13, midnight JST (UTC)
+   = April 12, 3:00 PM UTC → April 13, 3:00 PM UTC
    ```
 
-2. **Getting Slots**
+2. **Coach's Availability on Mondays:**
    ```
-   User in Asia/Tokyo requests slots for 2026-04-06
-   → System loads coach's availability (9:00-17:00 NY time)
-   → Converts to coach's UTC equivalent
-   → Generates slots
-   → Converts slots to user's timezone (Tokyo)
-   → Returns to user
+   Alice's Monday 9 AM - 5 PM EDT
+   = April 14, 9 AM EDT → April 14, 5 PM EDT
+   = April 14, 1:00 PM UTC → April 14, 9:00 PM UTC
    ```
 
-3. **Creating Booking**
+3. **Check Overlap:**
    ```
-   User provides: 2026-04-06T14:00:00Z (UTC)
-   → Checked against coach's availability in coach's timezone
-   → If valid, saved to database in UTC
+   User's UTC Range:      April 12, 3 PM — April 13, 3 PM UTC
+   Coach's Availability:  April 14, 1 PM — April 14, 9 PM UTC
+   
+   Result: NO OVERLAP (Coach's Monday is AFTER user's date range)
    ```
 
-### Supported Timezones
+4. **User Gets:**
+   ```
+   Empty slots array (Alice not available during Bob's April 13)
+   ```
+
+**But if Bob requests April 14:**
+
+1. **User's Date to UTC:**
+   ```
+   Bob's April 14 in Tokyo
+   = April 13, 3:00 PM UTC → April 14, 3:00 PM UTC
+   ```
+
+2. **Check Overlap:**
+   ```
+   User's UTC Range:      April 13, 3 PM — April 14, 3 PM UTC
+   Coach's Availability:  April 14, 1 PM — April 14, 9 PM UTC
+   
+   Overlap: April 14, 1 PM — April 14, 3 PM UTC
+   ```
+
+3. **Generate Slots:**
+   ```
+   April 14, 1:00 PM UTC - 1:30 PM UTC
+   April 14, 1:30 PM UTC - 2:00 PM UTC
+   April 14, 2:00 PM UTC - 2:30 PM UTC
+   April 14, 2:30 PM UTC - 3:00 PM UTC
+   
+   In Bob's timezone (Tokyo):
+   April 14, 10:00 PM JST - April 14, 10:30 PM JST
+   April 14, 10:30 PM JST - April 15, 12:00 AM JST
+   April 15, 12:00 AM JST - April 15, 12:30 AM JST
+   April 15, 12:30 AM JST - April 15, 1:00 AM JST
+   ```
+
+**Key Insight:** Alice (in New York) is available Monday afternoon, but for Bob (in Tokyo) requesting Monday, Alice's Monday is already Tuesday in Tokyo! This is why day boundaries shift across timezones.
+
+### Slot Generation Details
+
+**30-Minute Slot System:**
+
+Slots are generated dynamically from availability windows:
+
+1. **Input:** Coach's availability window (e.g., 9:00 AM - 5:00 PM)
+2. **Process:** Divide into contiguous 30-minute intervals
+3. **Output:** All 30-minute slots that don't conflict with bookings
+
+**Example:**
+
+```
+Availability: 9:00 AM - 12:00 PM (3 hours)
+↓
+Generated Slots:
+  9:00 AM - 9:30 AM   (30 min)
+  9:30 AM - 10:00 AM  (30 min)
+  10:00 AM - 10:30 AM (30 min)
+  10:30 AM - 11:00 AM (30 min)
+  11:00 AM - 11:30 AM (30 min)
+  11:30 AM - 12:00 PM (30 min)
+```
+
+**Slot Exclusions:**
+
+- Slots already booked (UNIQUE constraint on coach_id + start_time)
+- Slots outside availability windows
+- Slots in the past
+- Slots on days with exceptions (days off)
+
+### Important Considerations
+
+#### Day Boundary Shifts
+
+When coaches and users are in very different timezones, the user's requested date may span multiple days for the coach:
+
+```
+User requests "April 13" from UTC+12 (West)
+= Coach sees April 12 to April 14 in UTC-12 (East)
+```
+
+#### DST (Daylight Saving Time)
+
+Go automatically handles DST transitions when using IANA timezone identifiers:
+
+```go
+loc, _ := time.LoadLocation("America/New_York")
+// During EDT (April): UTC-4
+// During EST (January): UTC-5
+// Transition handled automatically
+```
+
+#### Always Use RFC3339 Format
+
+When creating bookings, always use UTC times in RFC3339 format:
+
+```json
+{
+  "start_time": "2026-04-14T14:00:00Z"
+}
+```
+
+The `Z` indicates UTC. Never use local times or fixed offsets.
+
+#### Supported Timezones
 
 The system supports all IANA timezone identifiers. Common examples:
 
 - **North America**: America/New_York, America/Chicago, America/Los_Angeles, America/Denver, Canada/Toronto
 - **Europe**: Europe/London, Europe/Paris, Europe/Berlin, Europe/Madrid
-- **Asia**: Asia/Tokyo, Asia/Shanghai, Asia/Hong_Kong, Asia/Singapore, Asia/Bangkok
+- **Asia**: Asia/Tokyo, Asia/Shanghai, Asia/Hong_Kong, Asia/Singapore, Asia/Bangkok, Asia/Kolkata
 - **Australia**: Australia/Sydney, Australia/Melbourne, Australia/Brisbane
-- **India**: Asia/Kolkata
 - **UTC**: UTC
 
 ### Testing Timezone Logic
@@ -554,6 +883,13 @@ Use the test data provided in the seed:
 
 **Coach Fiona** (Australia/Melbourne, 8 AM - 6 PM):
 - Test with User 7 (Europe/Paris) - 8-9 hour difference
+
+**Test Query:**
+```bash
+curl -X GET \
+  "http://localhost:8080/api/availability/coaches/1/slots?date=2026-04-06&userID=3" \
+  -H "Content-Type: application/json"
+```
 
 ## 🗄️ Database Schema
 
@@ -660,6 +996,185 @@ CREATE TABLE bookings (
 - **UNIQUE(coach_id, start_time)**: Prevents double-booking for same coach at same time
 
 ## 🏗️ Architecture
+
+### Design Decisions & Rationale
+
+This section documents the key architectural decisions made during the implementation. For detailed discussion and reasoning, see the documentation files in the `/prompt` directory.
+
+#### 1. **UTC Overlap Strategy for Timezone Handling**
+
+**Decision:** Use UTC-based date range overlap matching instead of time offset calculations.
+
+**Rationale:**
+- Handles DST (Daylight Saving Time) transitions automatically
+- Avoids manual timezone arithmetic errors
+- Uses Go's native timezone support via IANA identifiers
+- Correctly handles day boundary shifts across timezones
+
+**Alternative Considered:**
+- Fixed UTC offset calculations (e.g., UTC-5) - Would break during DST transitions
+- Server-side timezone assumption - Doesn't support cross-timezone bookings
+
+**Implementation:**
+- Coach stores availability in their local timezone (HH:MM format)
+- User requests dates in their local timezone
+- System converts both to UTC ranges and finds overlaps
+- Generated slots returned in UTC, displayed in user's timezone on client
+
+**Reference:** See `prompt/TIMEZONE_IMPLEMENTATION.md` and `prompt/TIMEZONE_QUICK_REFERENCE.md`
+
+#### 2. **30-Minute Fixed-Duration Slots**
+
+**Decision:** All bookings are fixed 30-minute slots, not flexible durations.
+
+**Rationale:**
+- Simplifies availability calculation
+- Prevents fragmented availability
+- Easier to detect double-booking conflicts
+- UNIQUE constraint on (coach_id, start_time) guarantees single booking per slot
+
+**Implementation:**
+- `end_time = start_time + 30 minutes` (always)
+- Slots generated dynamically from availability windows
+- Each availability window divided into contiguous 30-min intervals
+
+#### 3. **Clean Architecture (5-Layer)**
+
+**Decision:** Implement handler → service → repository layered architecture with interfaces.
+
+**Rationale:**
+- Clear separation of concerns
+- Testable business logic (interfaces allow mocking)
+- Reusable service layer
+- Easy to add authentication/logging middleware
+- Follows Go best practices
+
+**Layers:**
+```
+HTTP Request
+    ↓
+[Handler] - HTTP parsing, validation, error→HTTP status conversion
+    ↓
+[Service] - Business logic, timezone conversion, booking validation
+    ↓
+[Repository] - Database access, query execution
+    ↓
+[Model/DTO] - Domain entities and API contracts
+    ↓
+Database
+```
+
+**Reference:** See `prompt/ARCHITECTURE.md`
+
+#### 4. **Database Constraints for Data Integrity**
+
+**Decision:** Enforce business rules at database level with constraints.
+
+**Rationale:**
+- UNIQUE(coach_id, start_time) prevents double-booking
+- Foreign keys maintain referential integrity
+- Soft deletes (deleted flag) support logical deletion without data loss
+- Constraints work even if application has bugs
+
+**Constraints:**
+```sql
+PRIMARY KEY (id)
+UNIQUE (coach_id, start_time)           -- Prevent double-booking
+FOREIGN KEY (coach_id) REFERENCES coaches(id)
+FOREIGN KEY (user_id) REFERENCES users(id)
+```
+
+#### 5. **Idempotent Booking Creation**
+
+**Decision:** Support optional `idempotency_key` in booking creation for safe retries.
+
+**Rationale:**
+- Handles network failures gracefully
+- Clients can retry without creating duplicate bookings
+- Essential for production systems with unreliable networks
+
+**How It Works:**
+```json
+POST /api/bookings
+{
+  "user_id": 1,
+  "coach_id": 1,
+  "start_time": "2026-04-06T14:00:00Z",
+  "idempotency_key": "booking-20260405-001"
+}
+
+// First request → Creates booking, returns 201
+// Retry with same key → Returns existing booking, returns 200
+// Different key → Creates new booking
+```
+
+#### 6. **Transaction-Based Concurrency Safety**
+
+**Decision:** Use database transactions with row-level locking (FOR UPDATE) for booking creation.
+
+**Rationale:**
+- Prevents race conditions in concurrent booking
+- ACID guarantees at database level
+- Multiple layers of protection (transaction + constraint)
+
+**Layers:**
+1. **Application Level:** Check availability before attempting booking
+2. **Row Level:** FOR UPDATE lock prevents concurrent modifications
+3. **Constraint Level:** UNIQUE constraint catches any conflicts
+
+#### 7. **Manual Migration Setup**
+
+**Decision:** Require users to run migrations manually using golang-migrate CLI.
+
+**Rationale:**
+- Explicit control over database schema changes
+- Clear visibility into migration state
+- Safer for production deployments
+- Avoids auto-migration surprises
+
+**Setup:**
+```bash
+# User must install and run manually
+go install -tags 'mysql' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+migrate -path db/migrations -database "mysql://..." up
+```
+
+**Alternative Not Used:**
+- Auto-migration on app startup - Can cause data loss if migrations conflict
+- Embedded migrations - Less control, harder to debug
+
+#### 8. **No Docker Compose Dependency**
+
+**Decision:** Remove Docker from core setup; support native MySQL or user-provided instance.
+
+**Rationale:**
+- Reduces complexity for developers who have MySQL installed
+- Deployment doesn't depend on Docker setup
+- Better for production environments
+- Clear separation: User manages database infrastructure
+
+**Setup:**
+```bash
+# User manages MySQL independently
+# Application just connects via connection string
+DATABASE_URL=root:root@tcp(localhost:3306)/booking_api?parseTime=true
+```
+
+#### 9. **Structured Logging with Go's Standard log/slog**
+
+**Decision:** Use Go 1.24's built-in `log/slog` package instead of external logging library.
+
+**Rationale:**
+- No external dependency for logging
+- Structured logging built-in to standard library
+- Performance and simplicity
+- Future-proof (maintained by Go team)
+
+**Implementation:**
+```go
+log := logger.GetLogger()
+log.Error("failed to create booking", slog.String("error", err.Error()))
+```
 
 ### Overview
 
@@ -977,12 +1492,34 @@ mysql -h localhost -u root -p -e "USE booking_api; SHOW TABLES;"
 
 #### 2. Migration Errors
 
-**Error:** `error: Dirty database version`
+**Error:** `error: Table not found` or `Unknown table 'bookings'`
 
 **Solution:**
+
+Make sure you ran all the migration SQL files:
+
 ```bash
-# Force migration to version (check current version first)
-migrate -path db/migrations -database "mysql://root:root@tcp(localhost:3306)/booking_api" force 2
+# Run migrations in order
+mysql -h localhost -u root -p booking_api < db/migrations/000_v1.0.0_create_database.up.sql
+mysql -h localhost -u root -p booking_api < db/migrations/001_v1.0.0_init_schema.up.sql
+mysql -h localhost -u root -p booking_api < db/migrations/002_v1.0.0_seed_data.up.sql
+
+# Verify tables exist
+mysql -h localhost -u root -p booking_api -e "SHOW TABLES;"
+```
+
+If you need to reset and re-run:
+
+```bash
+# Rollback all migrations (in reverse order)
+mysql -h localhost -u root -p booking_api < db/migrations/002_v1.0.0_seed_data.down.sql
+mysql -h localhost -u root -p booking_api < db/migrations/001_v1.0.0_init_schema.down.sql
+mysql -h localhost -u root -p booking_api < db/migrations/000_v1.0.0_create_database.down.sql
+
+# Then re-apply them
+mysql -h localhost -u root -p booking_api < db/migrations/000_v1.0.0_create_database.up.sql
+mysql -h localhost -u root -p booking_api < db/migrations/001_v1.0.0_init_schema.up.sql
+mysql -h localhost -u root -p booking_api < db/migrations/002_v1.0.0_seed_data.up.sql
 ```
 
 #### 3. Port Already in Use
@@ -1102,7 +1639,12 @@ Contributions are welcome! Please follow these steps:
 
 For issues, questions, or suggestions:
 - Open an issue on GitHub
-- Check existing documentation in `/prompt` directory
+- Check existing documentation in `/prompt` directory for detailed discussions:
+  - `ARCHITECTURE.md` - Detailed architecture and layer explanations
+  - `IMPLEMENTATION_SUMMARY.md` - Complete implementation overview
+  - `TIMEZONE_IMPLEMENTATION.md` - Deep-dive on timezone handling
+  - `TIMEZONE_QUICK_REFERENCE.md` - Quick timezone reference
+  - `QUICKSTART.md` - 5-minute setup guide
 - Review test cases for usage examples
 
 ---
