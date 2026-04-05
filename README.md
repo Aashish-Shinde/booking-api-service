@@ -17,7 +17,6 @@ A production-grade REST API for an appointment booking system built in Go with M
 - [Make Commands](#make-commands)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
-- [Future Enhancements](#future-enhancements)
 
 ## ✨ Features
 
@@ -50,17 +49,25 @@ A production-grade REST API for an appointment booking system built in Go with M
 - **Make** (for build automation)
 - **golang-migrate** (for database migrations)
 
-Install golang-migrate:
-```bash
-go install -tags 'mysql' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-```
+## 📖 API Documentation & Swagger
+We use Swagger (OpenAPI 3.0) to define our API contracts. This allows you to visualize and interact with the API’s resources without having any of the implementation logic in place.
+
+How to use:
+Navigate to the docs/swagger.yaml file in this repository.
+
+Copy the contents of the file.
+
+Paste the YAML content into the Swagger Editor.
+
+From the editor, you can review the request/response schemas, status codes, and even trigger test calls if the service is running make sure port in swagger is same.
+
 
 ## 🚀 Setup & Installation
 
 ### Step 1: Clone the Repository
 
 ```bash
-cd /home/ashish/Desktop/personal/booking-api-service
+git clone https://github.com/Aashish-Shinde/booking-api-service 
 ```
 
 ### Step 2: Install Go Dependencies
@@ -1396,15 +1403,9 @@ POST /api/bookings
 make build           # Build the application binary
 make run             # Build and run the application
 make test            # Run all unit tests
-make test-verbose    # Run tests with verbose output
-make migrate-up      # Run database migrations (up)
-make migrate-down    # Rollback database migrations (down)
-make migrate-force   # Force migration to specific version
 make clean           # Clean build artifacts and binaries
 make deps            # Download and verify dependencies
 make fmt             # Format code with gofmt
-make lint            # Run golangci-lint
-make vet             # Run go vet for suspicious constructs
 make help            # Show available commands
 ```
 
@@ -1415,9 +1416,6 @@ make help            # Show available commands
 ```bash
 # Run all tests
 make test
-
-# Run with verbose output
-make test-verbose
 
 # Run specific test file
 go test ./internal/service -v
@@ -1573,54 +1571,6 @@ curl -X GET \
   -H "Content-Type: application/json"
 ```
 
-## 🚀 Future Enhancements
-
-### Planned Features
-
-- [ ] **Authentication & Authorization**
-  - JWT-based authentication
-  - Role-based access control (users, coaches, admins)
-  - Permission management
-
-- [ ] **Performance Optimization**
-  - Caching layer (Redis) for availability slots
-  - Database query optimization with indexes
-  - Connection pooling optimization
-
-- [ ] **Notifications**
-  - Email notifications for bookings
-  - SMS alerts
-  - Webhook support for external systems
-  - Push notifications
-
-- [ ] **Analytics & Reporting**
-  - Booking statistics
-  - Coach utilization metrics
-  - User analytics
-  - Revenue reports
-
-- [ ] **Advanced Availability**
-  - Recurring exceptions (e.g., every 2 weeks off)
-  - Buffer time between bookings
-  - Maximum bookings per day limit
-  - Lead time requirements
-
-- [ ] **Payment Integration**
-  - Stripe integration
-  - Refund handling
-  - Invoice generation
-
-- [ ] **Admin Dashboard**
-  - Booking management UI
-  - Coach/user management
-  - Exception calendar
-  - Analytics dashboard
-
-- [ ] **API Improvements**
-  - OpenAPI/Swagger documentation
-  - Rate limiting
-  - Request validation middleware
-  - API versioning
 
 ## 📄 License
 
@@ -1644,7 +1594,6 @@ For issues, questions, or suggestions:
   - `IMPLEMENTATION_SUMMARY.md` - Complete implementation overview
   - `TIMEZONE_IMPLEMENTATION.md` - Deep-dive on timezone handling
   - `TIMEZONE_QUICK_REFERENCE.md` - Quick timezone reference
-  - `QUICKSTART.md` - 5-minute setup guide
 - Review test cases for usage examples
 
 ---
