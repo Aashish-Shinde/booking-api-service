@@ -34,7 +34,7 @@ func NewAvailabilityService(
 	}
 }
 
-func (s *availabilityService) SetAvailability(ctx context.Context, coachID int64, req *dto.CreateAvailabilityRequest) error {
+func (s *availabilityService) SetWeeklyAvailability(ctx context.Context, coachID int64, req *dto.SetWeeklyAvailabilityRequest) error {
 	log := logger.GetLogger()
 
 	// Validate coach exists
@@ -47,42 +47,58 @@ func (s *availabilityService) SetAvailability(ctx context.Context, coachID int64
 		return errors.New("coach not found")
 	}
 
-	// Validate day of week
-	if req.DayOfWeek < 0 || req.DayOfWeek > 6 {
-		return errors.New("invalid day of week")
+	// Validate that we have availabilities
+	if len(req.Availabilities) == 0 {
+		return errors.New("at least one day's availability must be provided")
 	}
 
-	// Clear existing availability for this day
-	err = s.availabilityRepo.DeleteByCoachAndDay(ctx, coachID, req.DayOfWeek)
-	if err != nil {
-		log.Error("failed to delete existing availability")
-		return err
-	}
-
-	// Validate and create new availability slots
-	for _, slot := range req.Slots {
-		// Validate time format and alignment
-		if !utils.CheckTimeAlignment(slot.StartTime) || !utils.CheckTimeAlignment(slot.EndTime) {
-			return errors.New("times must align to 30-minute boundaries")
-		}
-
-		startMinutes, _ := utils.TimeStrToMinutes(slot.StartTime)
-		endMinutes, _ := utils.TimeStrToMinutes(slot.EndTime)
-		if startMinutes >= endMinutes {
-			return errors.New("start_time must be before end_time")
-		}
-
-		availability := &model.Availability{
-			CoachID:   coachID,
-			DayOfWeek: req.DayOfWeek,
-			StartTime: slot.StartTime,
-			EndTime:   slot.EndTime,
-		}
-
-		_, err := s.availabilityRepo.Create(ctx, availability)
+	// Clear all existing availability for this coach
+	// We'll delete for all 7 days and then set the new ones
+	for day := 0; day < 7; day++ {
+		err = s.availabilityRepo.DeleteByCoachAndDay(ctx, coachID, day)
 		if err != nil {
-			log.Error("failed to create availability")
+			log.Error("failed to delete existing availability")
 			return err
+		}
+	}
+
+	// Validate and create new availability slots for each day
+	for _, dayAvail := range req.Availabilities {
+		// Validate day of week
+		if dayAvail.DayOfWeek < 0 || dayAvail.DayOfWeek > 6 {
+			return fmt.Errorf("invalid day of week: %d", dayAvail.DayOfWeek)
+		}
+
+		// Skip days with no slots
+		if len(dayAvail.Slots) == 0 {
+			continue
+		}
+
+		// Validate and create new availability slots
+		for _, slot := range dayAvail.Slots {
+			// Validate time format and alignment
+			if !utils.CheckTimeAlignment(slot.StartTime) || !utils.CheckTimeAlignment(slot.EndTime) {
+				return fmt.Errorf("times for day %d must align to 30-minute boundaries", dayAvail.DayOfWeek)
+			}
+
+			startMinutes, _ := utils.TimeStrToMinutes(slot.StartTime)
+			endMinutes, _ := utils.TimeStrToMinutes(slot.EndTime)
+			if startMinutes >= endMinutes {
+				return fmt.Errorf("start_time must be before end_time for day %d", dayAvail.DayOfWeek)
+			}
+
+			availability := &model.Availability{
+				CoachID:   coachID,
+				DayOfWeek: dayAvail.DayOfWeek,
+				StartTime: slot.StartTime,
+				EndTime:   slot.EndTime,
+			}
+
+			_, err := s.availabilityRepo.Create(ctx, availability)
+			if err != nil {
+				log.Error("failed to create availability")
+				return err
+			}
 		}
 	}
 
@@ -168,11 +184,12 @@ func (s *availabilityService) GetAvailableSlots(ctx context.Context, coachID int
 
 	// If there's an exception and day is not available, return empty slots
 	if exception != nil && !exception.IsAvailable {
+		log.Info("coach is unavailable on this date due to an exception")
 		return &dto.GetSlotsResponse{Slots: []dto.AvailabilitySlot{}}, nil
 	}
 
 	// Get slots from exception or regular availability
-	var slots []dto.AvailabilitySlot
+	slots := []dto.AvailabilitySlot{} // Initialize as empty slice instead of nil
 
 	if exception != nil && exception.IsAvailable && exception.StartTime != nil && exception.EndTime != nil {
 		// Use exception times - generate slots for the user's requested date in their timezone
@@ -200,6 +217,11 @@ func (s *availabilityService) GetAvailableSlots(ctx context.Context, coachID int
 	}
 
 	slots = s.removeBookedSlots(slots, bookings, nil)
+
+	// Ensure we never return null slots - always return empty array if no slots
+	if slots == nil {
+		slots = []dto.AvailabilitySlot{}
+	}
 
 	return &dto.GetSlotsResponse{Slots: slots}, nil
 }
@@ -276,7 +298,7 @@ func (s *availabilityService) getBookingsForTimeRange(ctx context.Context, coach
 }
 
 func (s *availabilityService) removeBookedSlots(slots []dto.AvailabilitySlot, bookings []*model.Booking, loc *time.Location) []dto.AvailabilitySlot {
-	var availableSlots []dto.AvailabilitySlot
+	availableSlots := []dto.AvailabilitySlot{} // Initialize as empty slice
 
 	for _, slot := range slots {
 		slotStart, _ := utils.ParseRFC3339(slot.StartTime)

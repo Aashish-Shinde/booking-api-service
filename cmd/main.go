@@ -77,7 +77,7 @@ func main() {
 
 	// Routes
 	// Availability endpoints
-	router.Post("/api/v1/coaches/{coach_id}/availability", availabilityHandler.SetAvailability)
+	router.Post("/api/v1/coaches/{coach_id}/availability/weekly", availabilityHandler.SetWeeklyAvailability)
 	router.Post("/api/v1/coaches/{coach_id}/exceptions", availabilityHandler.AddException)
 	router.Get("/api/v1/coaches/{coach_id}/slots", availabilityHandler.GetSlots)
 

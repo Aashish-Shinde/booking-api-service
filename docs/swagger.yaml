@@ -29,13 +29,108 @@ paths:
             text/plain:
               example: OK
 
-  /api/v1/coaches/{coach_id}/availability:
+  # /api/v1/coaches/{coach_id}/availability:
+  #   post:
+  #     tags:
+  #       - Availability
+  #     summary: Set Coach Availability
+  #     description: Set weekly recurring availability for a coach
+  #     operationId: setAvailability
+  #     parameters:
+  #       - name: coach_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #           format: int64
+  #           example: 1
+  #       - name: X-Request-ID
+  #         in: header
+  #         schema:
+  #           type: string
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             type: object
+  #             required:
+  #               - day_of_week
+  #               - slots
+  #             properties:
+  #               day_of_week:
+  #                 type: integer
+  #                 description: Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+  #                 minimum: 0
+  #                 maximum: 6
+  #                 example: 1
+  #               slots:
+  #                 type: array
+  #                 minItems: 1
+  #                 items:
+  #                   type: object
+  #                   required:
+  #                     - start_time
+  #                     - end_time
+  #                   properties:
+  #                     start_time:
+  #                       type: string
+  #                       pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+  #                       example: '09:00'
+  #                     end_time:
+  #                       type: string
+  #                       pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+  #                       example: '17:00'
+  #           examples:
+  #             monday_slots:
+  #               summary: Monday 9 AM - 5 PM
+  #               value:
+  #                 day_of_week: 1
+  #                 slots:
+  #                   - start_time: '09:00'
+  #                     end_time: '17:00'
+  #             multiple_slots:
+  #               summary: Multiple slots in a day
+  #               value:
+  #                 day_of_week: 3
+  #                 slots:
+  #                   - start_time: '09:00'
+  #                     end_time: '12:00'
+  #                   - start_time: '13:00'
+  #                     end_time: '17:00'
+  #     responses:
+  #       '200':
+  #         description: Availability set successfully
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/SuccessResponse'
+  #       '400':
+  #         description: Invalid request data
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/ErrorResponse'
+  #       '404':
+  #         description: Coach not found
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/ErrorResponse'
+  #       '500':
+  #         description: Internal server error
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/coaches/{coach_id}/availability/weekly:
     post:
       tags:
         - Availability
-      summary: Set Coach Availability
-      description: Set weekly recurring availability for a coach
-      operationId: setAvailability
+      summary: Set Weekly Coach Availability
+      description: Set availability for entire week (multiple days) in a single request
+      operationId: setWeeklyAvailability
       parameters:
         - name: coach_id
           in: path
@@ -55,52 +150,86 @@ paths:
             schema:
               type: object
               required:
-                - day_of_week
-                - slots
+                - availabilities
               properties:
-                day_of_week:
-                  type: integer
-                  description: Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-                  minimum: 0
-                  maximum: 6
-                  example: 1
-                slots:
+                availabilities:
                   type: array
                   minItems: 1
                   items:
                     type: object
                     required:
-                      - start_time
-                      - end_time
+                      - day_of_week
+                      - slots
                     properties:
-                      start_time:
-                        type: string
-                        pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
-                        example: '09:00'
-                      end_time:
-                        type: string
-                        pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
-                        example: '17:00'
+                      day_of_week:
+                        type: integer
+                        description: Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+                        minimum: 0
+                        maximum: 6
+                        example: 1
+                      slots:
+                        type: array
+                        minItems: 0
+                        items:
+                          type: object
+                          required:
+                            - start_time
+                            - end_time
+                          properties:
+                            start_time:
+                              type: string
+                              pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                              example: '09:00'
+                            end_time:
+                              type: string
+                              pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                              example: '17:00'
             examples:
-              monday_slots:
-                summary: Monday 9 AM - 5 PM
+              full_week:
+                summary: Set full work week (Mon-Fri)
                 value:
-                  day_of_week: 1
-                  slots:
-                    - start_time: '09:00'
-                      end_time: '17:00'
-              multiple_slots:
-                summary: Multiple slots in a day
+                  availabilities:
+                    - day_of_week: 1
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '12:00'
+                        - start_time: '13:00'
+                          end_time: '17:00'
+                    - day_of_week: 2
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '17:00'
+                    - day_of_week: 3
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '17:00'
+                    - day_of_week: 4
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '17:00'
+                    - day_of_week: 5
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '17:00'
+              flexible_schedule:
+                summary: Set mixed schedule across week
                 value:
-                  day_of_week: 3
-                  slots:
-                    - start_time: '09:00'
-                      end_time: '12:00'
-                    - start_time: '13:00'
-                      end_time: '17:00'
+                  availabilities:
+                    - day_of_week: 1
+                      slots:
+                        - start_time: '10:00'
+                          end_time: '13:00'
+                    - day_of_week: 3
+                      slots:
+                        - start_time: '14:00'
+                          end_time: '18:00'
+                    - day_of_week: 5
+                      slots:
+                        - start_time: '09:00'
+                          end_time: '12:00'
       responses:
         '200':
-          description: Availability set successfully
+          description: Weekly availability set successfully
           content:
             application/json:
               schema:

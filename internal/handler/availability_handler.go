@@ -21,8 +21,8 @@ func NewAvailabilityHandler(availabilityService service.AvailabilityService) *Av
 	}
 }
 
-// SetAvailability sets weekly availability for a coach
-func (h *AvailabilityHandler) SetAvailability(w http.ResponseWriter, r *http.Request) {
+// SetWeeklyAvailability sets availability for entire week in one request
+func (h *AvailabilityHandler) SetWeeklyAvailability(w http.ResponseWriter, r *http.Request) {
 	log := logger.GetLogger()
 	coachIDStr := chi.URLParam(r, "coach_id")
 	coachID, err := strconv.ParseInt(coachIDStr, 10, 64)
@@ -31,20 +31,20 @@ func (h *AvailabilityHandler) SetAvailability(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var req dto.CreateAvailabilityRequest
+	var req dto.SetWeeklyAvailabilityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	err = h.availabilityService.SetAvailability(r.Context(), coachID, &req)
+	err = h.availabilityService.SetWeeklyAvailability(r.Context(), coachID, &req)
 	if err != nil {
-		log.Error("failed to set availability")
+		log.Error("failed to set weekly availability")
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondSuccess(w, http.StatusOK, "availability set successfully")
+	respondSuccess(w, http.StatusOK, "weekly availability set successfully")
 }
 
 // AddException adds a one-time exception to availability

@@ -67,6 +67,3 @@ func TestRemoveBookedSlots(t *testing.T) {
 		}
 	}
 }
-
-// Note: These require the service package to export dto and model
-// For actual integration tests, you would use a test database

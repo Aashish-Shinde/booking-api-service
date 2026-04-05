@@ -9,7 +9,7 @@ import (
 
 // AvailabilityService defines business logic for availability
 type AvailabilityService interface {
-	SetAvailability(ctx context.Context, coachID int64, req *dto.CreateAvailabilityRequest) error
+	SetWeeklyAvailability(ctx context.Context, coachID int64, req *dto.SetWeeklyAvailabilityRequest) error
 	AddException(ctx context.Context, coachID int64, req *dto.CreateAvailabilityExceptionRequest) error
 	GetAvailableSlots(ctx context.Context, coachID int64, date string, timezone string) (*dto.GetSlotsResponse, error)
 }
