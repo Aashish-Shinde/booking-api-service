@@ -1,4 +1,6 @@
--- Drop tables
+USE booking_api;
+
+-- Drop tables in reverse order of dependencies
 DROP TABLE IF EXISTS bookings;
 DROP TABLE IF EXISTS availability_exceptions;
 DROP TABLE IF EXISTS availability;

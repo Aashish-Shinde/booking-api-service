@@ -1,0 +1,590 @@
+openapi: 3.0.0
+info:
+  title: Booking API Service
+  description: REST API for managing appointment bookings between users and coaches
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development Server
+  - url: https://api.booking-service.com
+    description: Production Server
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health Check
+      description: Check if the API service is running
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              example: OK
+
+  /api/v1/coaches/{coach_id}/availability:
+    post:
+      tags:
+        - Availability
+      summary: Set Coach Availability
+      description: Set weekly recurring availability for a coach
+      operationId: setAvailability
+      parameters:
+        - name: coach_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - day_of_week
+                - slots
+              properties:
+                day_of_week:
+                  type: integer
+                  description: Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+                  minimum: 0
+                  maximum: 6
+                  example: 1
+                slots:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - start_time
+                      - end_time
+                    properties:
+                      start_time:
+                        type: string
+                        pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                        example: '09:00'
+                      end_time:
+                        type: string
+                        pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                        example: '17:00'
+            examples:
+              monday_slots:
+                summary: Monday 9 AM - 5 PM
+                value:
+                  day_of_week: 1
+                  slots:
+                    - start_time: '09:00'
+                      end_time: '17:00'
+              multiple_slots:
+                summary: Multiple slots in a day
+                value:
+                  day_of_week: 3
+                  slots:
+                    - start_time: '09:00'
+                      end_time: '12:00'
+                    - start_time: '13:00'
+                      end_time: '17:00'
+      responses:
+        '200':
+          description: Availability set successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Coach not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/coaches/{coach_id}/exceptions:
+    post:
+      tags:
+        - Availability
+      summary: Add Availability Exception
+      description: Add a one-time exception to coach availability (holiday, day off, special availability)
+      operationId: addException
+      parameters:
+        - name: coach_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - date
+                - is_available
+              properties:
+                date:
+                  type: string
+                  format: date
+                  pattern: '^\d{4}-\d{2}-\d{2}$'
+                  example: '2026-04-12'
+                is_available:
+                  type: boolean
+                  example: false
+                start_time:
+                  type: string
+                  pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                  nullable: true
+                  example: null
+                end_time:
+                  type: string
+                  pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                  nullable: true
+                  example: null
+            examples:
+              holiday_off:
+                summary: Coach off for holiday
+                value:
+                  date: '2026-05-01'
+                  is_available: false
+              special_availability:
+                summary: Special availability on weekend
+                value:
+                  date: '2026-04-12'
+                  is_available: true
+                  start_time: '10:00'
+                  end_time: '14:00'
+      responses:
+        '200':
+          description: Exception added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Coach not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/coaches/{coach_id}/slots:
+    get:
+      tags:
+        - Availability
+      summary: Get Available Slots
+      description: Get available time slots for a coach on a specific date
+      operationId: getSlots
+      parameters:
+        - name: coach_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2026-04-06'
+        - name: timezone
+          in: query
+          required: true
+          schema:
+            type: string
+            example: America/New_York
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Available slots retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSlotsResponse'
+              examples:
+                with_slots:
+                  summary: Day with available slots
+                  value:
+                    slots:
+                      - start_time: '2026-04-06T09:00:00-04:00'
+                        end_time: '2026-04-06T17:00:00-04:00'
+                no_slots:
+                  summary: Day with no availability
+                  value:
+                    slots: []
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Coach not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/bookings:
+    post:
+      tags:
+        - Bookings
+      summary: Create Booking
+      description: Create a new booking for a user with a coach
+      operationId: createBooking
+      parameters:
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - coach_id
+                - start_time
+              properties:
+                user_id:
+                  type: integer
+                  format: int64
+                  example: 1
+                coach_id:
+                  type: integer
+                  format: int64
+                  example: 1
+                start_time:
+                  type: string
+                  format: date-time
+                  example: '2026-04-06T09:00:00Z'
+                idempotency_key:
+                  type: string
+                  nullable: true
+                  example: booking-001-user-1-coach-1
+            examples:
+              basic_booking:
+                summary: Simple booking
+                value:
+                  user_id: 1
+                  coach_id: 1
+                  start_time: '2026-04-06T09:00:00Z'
+              idempotent_booking:
+                summary: Booking with idempotency key
+                value:
+                  user_id: 2
+                  coach_id: 2
+                  start_time: '2026-04-07T10:00:00Z'
+                  idempotency_key: booking-20260407-user-2-coach-2-001
+      responses:
+        '201':
+          description: Booking created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingResponse'
+        '400':
+          description: Invalid request data or slot not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User or coach not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Slot already booked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{user_id}/bookings:
+    get:
+      tags:
+        - Bookings
+      summary: Get User Bookings
+      description: Get all bookings for a specific user
+      operationId: getUserBookings
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bookings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingsListResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/bookings/{id}:
+    put:
+      tags:
+        - Bookings
+      summary: Modify Booking
+      description: Modify an existing booking by changing its start time
+      operationId: modifyBooking
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - start_time
+              properties:
+                start_time:
+                  type: string
+                  format: date-time
+                  example: '2026-04-06T10:00:00Z'
+      responses:
+        '200':
+          description: Booking modified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingResponse'
+        '400':
+          description: Invalid request data or slot not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: New slot already booked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Bookings
+      summary: Cancel Booking
+      description: Cancel an existing booking
+      operationId: cancelBooking
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+        - name: X-Request-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Booking cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    SuccessResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: Operation completed successfully
+        data:
+          type: object
+          example: null
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: Invalid input
+        code:
+          type: string
+          example: INVALID_INPUT
+        message:
+          type: string
+          example: Day of week must be between 0-6
+
+    GetSlotsResponse:
+      type: object
+      required:
+        - slots
+      properties:
+        slots:
+          type: array
+          items:
+            type: object
+            required:
+              - start_time
+              - end_time
+            properties:
+              start_time:
+                type: string
+                format: date-time
+                example: '2026-04-06T09:00:00Z'
+              end_time:
+                type: string
+                format: date-time
+                example: '2026-04-06T17:00:00Z'
+
+    BookingResponse:
+      type: object
+      required:
+        - id
+        - user_id
+        - coach_id
+        - start_time
+        - end_time
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        user_id:
+          type: integer
+          format: int64
+          example: 1
+        coach_id:
+          type: integer
+          format: int64
+          example: 1
+        start_time:
+          type: string
+          format: date-time
+          example: '2026-04-06T09:00:00Z'
+        end_time:
+          type: string
+          format: date-time
+          example: '2026-04-06T10:00:00Z'
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - CANCELLED
+            - COMPLETED
+          example: ACTIVE
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-04-05T10:30:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-04-05T10:30:00Z'
+
+    BookingsListResponse:
+      type: object
+      required:
+        - bookings
+        - count
+      properties:
+        bookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingResponse'
+        count:
+          type: integer
+          example: 2
+
+tags:
+  - name: Health
+    description: Service health checks
+  - name: Availability
+    description: Coach availability management
+  - name: Bookings
+    description: Booking management

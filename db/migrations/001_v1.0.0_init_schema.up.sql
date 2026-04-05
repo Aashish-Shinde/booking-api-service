@@ -1,3 +1,6 @@
+USE booking_api;
+
+
 -- Create users table
 CREATE TABLE users (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -77,6 +80,6 @@ CREATE TABLE bookings (
     INDEX idx_start_time (start_time),
     INDEX idx_status (status),
     INDEX idx_deleted (deleted),
-    CONSTRAINT chk_time_order CHECK (start_time < end_time),
+    CONSTRAINT check_time_order CHECK (start_time < end_time), -- update manually as it was duplicate contrain name
     CONSTRAINT chk_booking_status CHECK (status IN ('ACTIVE', 'CANCELLED', 'COMPLETED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
