@@ -150,21 +150,16 @@ func (s *availabilityService) GetAvailableSlots(ctx context.Context, coachID int
 		return nil, errors.New("coach not found")
 	}
 
-	// Parse date
-	dateTime, err := utils.DateStringToTime(date)
+	// Timezone helper for proper time conversion
+	tzHelper := utils.NewTimezoneHelper()
+
+	// Get day range in UTC for the user's requested date in their timezone
+	startUTC, endUTC, err := tzHelper.GetDayRangeInUTC(date, timezone)
 	if err != nil {
-		return nil, errors.New("invalid date format")
+		return nil, fmt.Errorf("invalid date or timezone: %v", err)
 	}
 
-	// Load timezone location
-	loc, err := time.LoadLocation(timezone)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timezone: %v", err)
-	}
-
-	dayOfWeek := utils.GetDayOfWeek(dateTime)
-
-	// Check for exceptions first
+	// Check for exceptions in this UTC range
 	exception, err := s.availabilityExceptionRepo.GetByCoachAndDate(ctx, coachID, date)
 	if err != nil {
 		log.Error("failed to get exception")
@@ -180,30 +175,31 @@ func (s *availabilityService) GetAvailableSlots(ctx context.Context, coachID int
 	var slots []dto.AvailabilitySlot
 
 	if exception != nil && exception.IsAvailable && exception.StartTime != nil && exception.EndTime != nil {
-		// Use exception times
-		slots = s.generateSlots(dateTime, *exception.StartTime, *exception.EndTime, loc)
+		// Use exception times - generate slots for the user's requested date in their timezone
+		slots = s.generateSlotsForTimezone(startUTC, endUTC, *exception.StartTime, *exception.EndTime, timezone, coach.Timezone)
 	} else if exception == nil {
-		// Use regular availability
-		availabilities, err := s.availabilityRepo.GetByCoachAndDay(ctx, coachID, dayOfWeek)
+		// Use regular availability - get all availability rules for this coach
+		availabilities, err := s.availabilityRepo.GetByCoach(ctx, coachID)
 		if err != nil {
 			log.Error("failed to get availabilities")
 			return nil, err
 		}
 
+		// Filter and convert availabilities to slots in UTC
 		for _, avail := range availabilities {
-			slotList := s.generateSlots(dateTime, avail.StartTime, avail.EndTime, loc)
+			slotList := s.generateSlotsForTimezone(startUTC, endUTC, avail.StartTime, avail.EndTime, timezone, coach.Timezone)
 			slots = append(slots, slotList...)
 		}
 	}
 
 	// Remove booked slots
-	bookings, err := s.getBookingsForDate(ctx, coachID, dateTime)
+	bookings, err := s.getBookingsForTimeRange(ctx, coachID, startUTC, endUTC)
 	if err != nil {
 		log.Error("failed to get bookings")
 		return nil, err
 	}
 
-	slots = s.removeBookedSlots(slots, bookings, loc)
+	slots = s.removeBookedSlots(slots, bookings, nil)
 
 	return &dto.GetSlotsResponse{Slots: slots}, nil
 }
@@ -228,11 +224,55 @@ func (s *availabilityService) generateSlots(date time.Time, startTime string, en
 	return slots
 }
 
+// generateSlotsForTimezone generates 30-minute slots considering timezone differences between user and coach
+func (s *availabilityService) generateSlotsForTimezone(startUTC, endUTC time.Time, startTimeStr, endTimeStr string, userTimezone, coachTimezone string) []dto.AvailabilitySlot {
+	var slots []dto.AvailabilitySlot
+
+	// Load both timezones
+	coachLoc, _ := time.LoadLocation(coachTimezone)
+	_ = userTimezone // userTimezone available for future enhancements
+
+	// Parse availability hours in coach's timezone
+	startMinutes, _ := utils.TimeStrToMinutes(startTimeStr)
+	endMinutes, _ := utils.TimeStrToMinutes(endTimeStr)
+
+	// Iterate through the UTC time range and find overlaps
+	currentUTC := startUTC
+	for currentUTC.Before(endUTC) {
+		// Convert current UTC time to coach's timezone
+		coachLocalTime := currentUTC.In(coachLoc)
+		coachMinutes := coachLocalTime.Hour()*60 + coachLocalTime.Minute()
+
+		// Check if this time falls within coach's working hours
+		if coachMinutes >= startMinutes && coachMinutes+30 <= endMinutes {
+			// Create a 30-minute slot
+			slotEndUTC := currentUTC.Add(30 * time.Minute)
+
+			// Only include if both start and end are within the UTC range
+			if slotEndUTC.Before(endUTC) || slotEndUTC.Equal(endUTC) {
+				slots = append(slots, dto.AvailabilitySlot{
+					StartTime: currentUTC.Format(time.RFC3339),
+					EndTime:   slotEndUTC.Format(time.RFC3339),
+				})
+			}
+		}
+
+		currentUTC = currentUTC.Add(30 * time.Minute)
+	}
+
+	return slots
+}
+
 func (s *availabilityService) getBookingsForDate(ctx context.Context, coachID int64, date time.Time) ([]*model.Booking, error) {
 	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	return s.bookingRepo.GetByCoachAndDateRange(ctx, coachID, startOfDay.Format(time.RFC3339), endOfDay.Format(time.RFC3339))
+}
+
+// getBookingsForTimeRange gets all bookings for a coach within a UTC time range
+func (s *availabilityService) getBookingsForTimeRange(ctx context.Context, coachID int64, startUTC, endUTC time.Time) ([]*model.Booking, error) {
+	return s.bookingRepo.GetByCoachAndDateRange(ctx, coachID, startUTC.Format(time.RFC3339), endUTC.Format(time.RFC3339))
 }
 
 func (s *availabilityService) removeBookedSlots(slots []dto.AvailabilitySlot, bookings []*model.Booking, loc *time.Location) []dto.AvailabilitySlot {
